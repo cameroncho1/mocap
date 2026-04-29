@@ -21,7 +21,8 @@ class Cameras:
         f = open(filename)
         self.camera_params = json.load(f)
 
-        self.cameras = Camera(fps=90, resolution=Camera.RES_SMALL, gain=10, exposure=100)
+        # self.cameras = Camera(fps=90, resolution=Camera.RES_SMALL, gain=10, exposure=100)
+        self.cameras = Camera(fps=90, resolution=Camera.RES_SMALL, gain=10, exposure=100, colour=True)
         self.num_cameras = len(self.cameras.exposure)
         print(self.num_cameras)
 
@@ -67,9 +68,11 @@ class Cameras:
 
     def _camera_read(self):
         frames, _ = self.cameras.read()
+        frames = [frames]  # wrap single camera frame in a list, remove once more cameras are added
 
         for i in range(0, self.num_cameras):
-            frames[i] = np.rot90(frames[i], k=self.camera_params[i]["rotation"])
+            # frames[i] = np.rot90(frames[i], k=self.camera_params[i]["rotation"])
+            frames[i] = np.rot90(frames[i].copy(), k=self.camera_params[i]["rotation"])
             frames[i] = make_square(frames[i])
             frames[i] = cv.undistort(frames[i], self.get_camera_params(i)["intrinsic_matrix"], self.get_camera_params(i)["distortion_coef"])
             frames[i] = cv.GaussianBlur(frames[i],(9,9),0)
@@ -505,7 +508,11 @@ def drawlines(img1,lines):
 
 
 def make_square(img):
-    x, y, _ = img.shape
+    # x, y, _ = img.shape
+    if len(img.shape) == 2:
+        x, y = img.shape
+    else:
+        x, y, _ = img.shape
     size = max(x, y)
     new_img = np.zeros((size, size, 3), dtype=np.uint8)
     ax,ay = (size - img.shape[1])//2,(size - img.shape[0])//2

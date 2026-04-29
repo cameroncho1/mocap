@@ -18,7 +18,8 @@ import json
 
 serialLock = threading.Lock()
 
-ser = serial.Serial("/dev/cu.usbserial-02X2K2GE", 1000000, write_timeout=1, )
+# for esp32 communication
+# ser = serial.Serial("/dev/cu.usbserial-02X2K2GE", 1000000, write_timeout=1, )
 
 app = Flask(__name__)
 CORS(app, supports_credentials=True)
@@ -32,7 +33,7 @@ num_objects = 2
 def camera_stream():
     cameras = Cameras.instance()
     cameras.set_socketio(socketio)
-    cameras.set_ser(ser)
+    # cameras.set_ser(ser)
     cameras.set_serialLock(serialLock)
     cameras.set_num_objects(num_objects)
     
@@ -53,7 +54,7 @@ def camera_stream():
                 time.sleep(last_run_time - time_now + loop_interval)
             last_run_time = time.time()
             frames = cameras.get_frames()
-            jpeg_frame = cv.imencode('.jpg', frames)[1].tostring()
+            jpeg_frame = cv.imencode('.jpg', frames)[1].tobytes()
 
             yield (b'--frame\r\n'
                 b'Content-Type: image/jpeg\r\n\r\n' + jpeg_frame + b'\r\n')
@@ -123,9 +124,8 @@ def arm_drone(data):
             "armed": data["droneArmed"][droneIndex],
         }
         with serialLock:
-            ser.write(f"{str(droneIndex)}{json.dumps(serial_data)}".encode('utf-8'))
-        
-        time.sleep(0.01)
+        # ser.write(f"{str(droneIndex)}{json.dumps(serial_data)}".encode('utf-8'))
+            time.sleep(0.01)
 
 @socketio.on("set-drone-pid")
 def arm_drone(data):
@@ -133,7 +133,7 @@ def arm_drone(data):
         "pid": [float(x) for x in data["dronePID"]],
     }
     with serialLock:
-        ser.write(f"{str(data['droneIndex'])}{json.dumps(serial_data)}".encode('utf-8'))
+        # ser.write(f"{str(data['droneIndex'])}{json.dumps(serial_data)}".encode('utf-8'))
         time.sleep(0.01)
 
 @socketio.on("set-drone-setpoint")
@@ -142,7 +142,7 @@ def arm_drone(data):
         "setpoint": [float(x) for x in data["droneSetpoint"]],
     }
     with serialLock:
-        ser.write(f"{str(data['droneIndex'])}{json.dumps(serial_data)}".encode('utf-8'))
+        # ser.write(f"{str(data['droneIndex'])}{json.dumps(serial_data)}".encode('utf-8'))
         time.sleep(0.01)
 
 @socketio.on("set-drone-trim")
@@ -151,7 +151,7 @@ def arm_drone(data):
         "trim": [int(x) for x in data["droneTrim"]],
     }
     with serialLock:
-        ser.write(f"{str(data['droneIndex'])}{json.dumps(serial_data)}".encode('utf-8'))
+        # ser.write(f"{str(data['droneIndex'])}{json.dumps(serial_data)}".encode('utf-8'))
         time.sleep(0.01)
 
 
