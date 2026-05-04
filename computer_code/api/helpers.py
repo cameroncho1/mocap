@@ -68,7 +68,7 @@ class Cameras:
 
     def _camera_read(self):
         frames, _ = self.cameras.read()
-        frames = [frames]  # wrap single camera frame in a list, remove once more cameras are added
+        # frames = [frames]  # wrap single camera frame in a list, remove once more cameras are added
 
         for i in range(0, self.num_cameras):
             # frames[i] = np.rot90(frames[i], k=self.camera_params[i]["rotation"])
@@ -425,7 +425,7 @@ def find_point_correspondance_and_object_points(image_points, camera_poses, fram
 
 
 def locate_objects(object_points, errors):
-    dist1 = 0.095
+    dist1 = 0.082 #changed from original .095 to .082
     dist2 = 0.15
 
     distance_matrix = np.zeros((object_points.shape[0], object_points.shape[0]))
