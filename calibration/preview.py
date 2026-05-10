@@ -1,30 +1,32 @@
 from pseyepy import Camera
 import cv2
-import numpy as np
 
-# Connect all 4 cameras
-cams = Camera([0, 1, 2, 3], fps=90, resolution=Camera.RES_SMALL, colour=True)
+# Connect one camera
+cam = Camera(0, fps=90, resolution=Camera.RES_SMALL, colour=True)
 
 while True:
-    frames, _ = cams.read()
+    frame, _ = cam.read()
 
-    thumb_w, thumb_h = 640, 480
-    thumbs = []
+    # Convert RGB to BGR for OpenCV display
+    frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
 
-    for i, frame in enumerate(frames):
-        frame = cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        thumb = cv2.resize(frame, (thumb_w, thumb_h))
-        cv2.putText(thumb, f'cam_{i+1}', (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
-        thumbs.append(thumb)
+    # Optional: resize display
+    frame = cv2.resize(frame, (640, 480))
 
-    # 2x2 grid
-    top_row = np.hstack([thumbs[0], thumbs[1]])
-    bot_row = np.hstack([thumbs[2], thumbs[3]])
-    grid = np.vstack([top_row, bot_row])
+    cv2.putText(
+        frame,
+        "cam_1",
+        (10, 30),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (0, 255, 0),
+        2
+    )
 
-    cv2.imshow('All cameras', grid)
-    if cv2.waitKey(1) & 0xFF == ord('q'):
+    cv2.imshow("Camera", frame)
+
+    if cv2.waitKey(1) & 0xFF == ord("q"):
         break
 
-cams.end()
+cam.end()
 cv2.destroyAllWindows()

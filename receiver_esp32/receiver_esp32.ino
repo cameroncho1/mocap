@@ -5,6 +5,7 @@
 #include <PID_v1.h>
 #include <stdint.h>
 #include <EEPROM.h>
+#include <ESP32Servo.h>
 #include "sbus.h"
 
 #define batVoltagePin 34
@@ -13,8 +14,23 @@
 #define Z_GAIN 0.7
 
 #define DRONE_INDEX 1
-
 #define EEPROM_SIZE 4
+
+// ===== SERVO CONFIG =====
+const int SERVO_PIN = 25;          // GPIO for servo signal
+const int HOME_ANGLE = 45;         // home/zero position
+const int DEPLOY_ANGLE = 90;       // deployed position
+const unsigned long RANDOM_MIN_MS = 0;        // min random delay before deploy
+const unsigned long RANDOM_MAX_MS = 5000;     // max random delay (5s)
+const unsigned long WAIT_FOR_HIT_MS = 15000;  // wait for hit confirmation (15s)
+
+Servo deployServo;
+
+enum DeployState { IDLE, WAITING_TO_DEPLOY, WAITING_FOR_HIT };
+DeployState deployState = IDLE;
+unsigned long deployStateStart = 0;
+unsigned long deployRandomDelay = 0;
+// =========================
 
 unsigned long lastPing;
 
@@ -30,10 +46,6 @@ int xTrim = 0, yTrim = 0, zTrim = 0, yawTrim = 0;
 
 double groundEffectCoef = 28, groundEffectOffset = -0.035;
 
-// nested pid loops
-// outer: position pid loop
-// inner: velocity pid loop
-// velocity pid loop sends accel setpoint to flight controller
 double xPosSetpoint = 0, xPos = 0;
 double yPosSetpoint = 0, yPos = 0;
 double zPosSetpoint = 0, zPos = 0;
@@ -59,7 +71,6 @@ PID xVelPID(&xVel, &xVelOutput, &xVelSetpoint, xyVelKp, xyVelKi, xyVelKd, DIRECT
 PID yVelPID(&yVel, &yVelOutput, &yVelSetpoint, xyVelKp, xyVelKi, xyVelKd, DIRECT);
 PID zVelPID(&zVel, &zVelOutput, &zVelSetpoint, zVelKp, zVelKi, zVelKd, DIRECT);
 
-
 unsigned long lastLoopTime = micros();
 unsigned long lastSbusSend = micros();
 float loopFrequency = 2000.0;
@@ -71,9 +82,58 @@ float sbusFrequency = 50.0;
   uint8_t newMACAddress[] = { 0xC0, 0x4E, 0x30, 0x4B, 0x80, 0x3B };
 #endif
 
-// callback function that will be executed when data is received
-void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
-  // Serial.println((char*)incomingData);
+// ===== SERVO HELPERS =====
+void startDeploySequence() {
+  if (deployState != IDLE) {
+    Serial.println("[SERVO] Deploy command ignored, sequence already in progress");
+    return;
+  }
+  deployRandomDelay = random(RANDOM_MIN_MS, RANDOM_MAX_MS + 1);
+  deployStateStart = millis();
+  deployState = WAITING_TO_DEPLOY;
+  Serial.printf("[SERVO] Deploy command received. Will deploy in %lu ms\n", deployRandomDelay);
+}
+
+void confirmHit() {
+  if (deployState == WAITING_FOR_HIT) {
+    Serial.println("[SERVO] Hit confirmed! Retracting to home.");
+    deployServo.write(HOME_ANGLE);
+    deployState = IDLE;
+  } else {
+    Serial.println("[SERVO] Hit received but not in WAITING_FOR_HIT state, ignoring.");
+  }
+}
+void updateServoStateMachine() {
+  unsigned long now = millis();
+
+  switch (deployState) {
+    case WAITING_TO_DEPLOY:
+      if (now - deployStateStart >= deployRandomDelay) {
+        Serial.printf("[SERVO] Deploying to %d deg. Waiting %lu ms for hit confirmation.\n",
+                      DEPLOY_ANGLE, WAIT_FOR_HIT_MS);
+        deployServo.write(DEPLOY_ANGLE);
+        deployStateStart = now;
+        deployState = WAITING_FOR_HIT;
+      }
+      break;
+
+    case WAITING_FOR_HIT:
+      if (now - deployStateStart >= WAIT_FOR_HIT_MS) {
+        Serial.println("[SERVO] No hit confirmation in 15s. Staying at deploy position.");
+        // servo stays at DEPLOY_ANGLE, just exit the wait state
+        deployState = IDLE;
+      }
+      break;
+
+    case IDLE:
+    default:
+      break;
+  }
+}
+// =========================
+
+void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) {
+  (void)info;
   DeserializationError err = deserializeJson(json, (char *)incomingData);
 
   if (err) {
@@ -116,20 +176,35 @@ void OnDataRecv(const uint8_t *mac, const uint8_t *incomingData, int len) {
     yTrim = json["trim"][1];
     zTrim = json["trim"][2];
     yawTrim = json["trim"][3];
+  } else if (json.containsKey("deploy")) {
+    if (json["deploy"]) {
+      startDeploySequence();
+    }
+  } else if (json.containsKey("hit")) {
+    if (json["hit"]) {
+      confirmHit();
+    }
   }
 
   lastPing = micros();
 }
 
 void resetPid(PID &pid, double min, double max) {
-  pid.SetOutputLimits(0.0, 1.0); 
+  pid.SetOutputLimits(0.0, 1.0);
   pid.SetOutputLimits(-1.0, 0.0);
   pid.SetOutputLimits(min, max);
 }
 
 void setup() {
-  // Initialize Serial Monitor
   Serial.begin(115200);
+
+  // Servo init - go to home position
+  deployServo.attach(SERVO_PIN);
+  deployServo.write(HOME_ANGLE);
+  Serial.printf("[SERVO] Initialized at home (%d deg)\n", HOME_ANGLE);
+
+  // Random seed using floating analog pin for entropy
+  randomSeed(analogRead(0));
 
   sbus_tx.Begin();
   data.failsafe = false;
@@ -145,7 +220,6 @@ void setup() {
     sbus_tx.Write();
   }
 
-  // Set device as a Wi-Fi Station
   wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
   esp_wifi_init(&cfg);
   esp_wifi_set_mode(WIFI_MODE_STA);
@@ -153,10 +227,8 @@ void setup() {
   esp_wifi_set_bandwidth(WIFI_IF_STA, WIFI_BW_HT20);
   esp_wifi_set_storage(WIFI_STORAGE_RAM);
   esp_wifi_set_ps(WIFI_PS_NONE);
-  //esp_wifi_set_channel(1, WIFI_SECOND_CHAN_NONE);
   esp_wifi_start();
 
-  // Init ESP-NOW
   if (esp_now_init() != ESP_OK) {
     Serial.println("Error initializing ESP-NOW");
     return;
@@ -164,10 +236,7 @@ void setup() {
   esp_wifi_config_espnow_rate(WIFI_IF_STA, WIFI_PHY_RATE_24M);
   esp_wifi_start();
 
-  // Once ESPNow is successfully Init, we will register for recv CB to
-  // get recv packer info
   esp_now_register_recv_cb(OnDataRecv);
-
 
   xPosPID.SetMode(AUTOMATIC);
   yPosPID.SetMode(AUTOMATIC);
@@ -176,8 +245,7 @@ void setup() {
   xVelPID.SetMode(AUTOMATIC);
   yVelPID.SetMode(AUTOMATIC);
   zVelPID.SetMode(AUTOMATIC);
-  
-  // Sample rate is determined by main loop
+
   xPosPID.SetSampleTime(0);
   yPosPID.SetSampleTime(0);
   zPosPID.SetSampleTime(0);
@@ -196,11 +264,6 @@ void setup() {
 
   EEPROM.begin(EEPROM_SIZE);
 
-  // xTrim = EEPROM.read(0);
-  // yTrim = EEPROM.read(1);
-  // zTrim = EEPROM.read(2);
-  // yawTrim = EEPROM.read(3);
-
   lastPing = micros();
   lastLoopTime = micros();
   lastSbusSend = micros();
@@ -209,6 +272,9 @@ void setup() {
 void loop() {
   while (micros() - lastLoopTime < 1e6 / loopFrequency) { yield(); }
   lastLoopTime = micros();
+
+  // Run servo state machine
+  updateServoStateMachine();
 
   if (micros() - lastPing > 2e6) {
     armed = false;
@@ -249,11 +315,6 @@ void loop() {
 
   if (micros() - lastSbusSend > 1e6 / sbusFrequency) {
     lastSbusSend = micros();
-    // Serial.printf("PWM x: %d, y: %d, z: %d, yaw: %d\nPos x: %f, y: %f, z: %f, yaw: %f\n", xPWM, yPWM, zPWM, yawPWM, xVel, yVel, zPos, yawPos);
-    // Serial.printf("Setpoint x: %f, y: %f, z: %f\n", xVelSetpoint, yVelSetpoint, zVelSetpoint);
-    // Serial.printf("Pos x: %f, y: %f, z: %f\n", xVel, yVel, zPos);
-    //Serial.printf("Output x: %f, y: %f, z: %f\n", xVelOutput, yVelOutput, zVelOutput);
-
     sbus_tx.data(data);
     sbus_tx.Write();
   }

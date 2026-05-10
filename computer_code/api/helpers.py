@@ -270,7 +270,7 @@ def bundle_adjustment(image_points, camera_poses, socketio):
             intrinsic = cameras.get_camera_params(i)["intrinsic_matrix"]
             intrinsic[0, 0] = focal_distances[i]
             intrinsic[1, 1] = focal_distances[i]
-            # cameras.set_camera_params(i, intrinsic)
+            cameras.set_camera_params(i, intrinsic)
         object_points = triangulate_points(image_points, camera_poses)
         errors = calculate_reprojection_errors(image_points, object_points, camera_poses)
         errors = errors.astype(np.float32)
@@ -288,7 +288,7 @@ def bundle_adjustment(image_points, camera_poses, socketio):
         init_params = np.concatenate([init_params, camera_pose["t"].flatten()])
 
     res = optimize.least_squares(
-        residual_function, init_params, verbose=2, loss="cauchy", ftol=1E-2
+        residual_function, init_params, verbose=2, loss="cauchy", ftol=1E-4, max_nfev=1000
     )
     return params_to_camera_poses(res.x)[0]
     
